@@ -1,4 +1,5 @@
 import type { DifficultyTier } from '../game/difficulty.js';
+import type { WordRejectionReason } from '../game/wordValidation.js';
 
 // All bot-facing WhatsApp text lives in this one file — edit freely.
 // This is the only place you need to change to reword what the bot says.
@@ -56,5 +57,50 @@ export function turnStatus(params: {
     `👥 Players left: ${params.playersRemaining}/${params.totalPlayers}\n` +
     `⏳ You have ${params.timeLimitSeconds} seconds to reply\n` +
     `📝 Total words: ${params.totalWords}`
+  );
+}
+
+export function wordRejected(
+  reason: WordRejectionReason,
+  word: string,
+  letter: string,
+  minLength: number,
+  phoneNumber: string,
+): string {
+  if (reason === 'duplicate') {
+    return `❌ "${word}" has already been used this round. Try again, @${phoneNumber}.`;
+  }
+  if (reason === 'rule') {
+    return (
+      `❌ "${word}" doesn't meet the rule. Needs to start with ${letter.toUpperCase()} ` +
+      `and be at least ${minLength} letters. Try again , @${phoneNumber}.`
+    );
+  }
+  return `❌ "${word}" isn't in my word list. Try again, @${phoneNumber}.`;
+}
+
+export function timeoutElimination(phoneNumber: string): string {
+  return `⏱️ Time's up, @${phoneNumber}! You're out 😥.`;
+}
+
+export function roundWinStandalone(params: {
+  winner: string;
+  totalWords: number;
+  longestWord: string;
+  longestWordLength: number;
+  longestWordBy: string;
+  elapsed: string;
+}): string {
+  // No word was ever accepted this round (e.g. an immediate timeout) —
+  // there's nothing meaningful to report for "longest word"
+  const longestWordLine = params.longestWordBy
+    ? `Longest word: ${params.longestWord} (${params.longestWordLength}) by @${params.longestWordBy}\n`
+    : '';
+
+  return (
+    `🏆 @${params.winner} won the game!\n` +
+    `Words: ${params.totalWords}\n` +
+    longestWordLine +
+    `Time: ${params.elapsed}`
   );
 }

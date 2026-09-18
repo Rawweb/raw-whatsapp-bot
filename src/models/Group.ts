@@ -11,6 +11,12 @@ interface SessionWinEntry {
   wins: number;
 }
 
+interface LongestWord {
+  word: string;
+  length: number;
+  userId: string;
+}
+
 interface ActiveGame {
   isSession: boolean;
   currentRound: number;
@@ -29,12 +35,12 @@ interface ActiveGame {
   eliminated: string[];
   wordsUsedThisRound: string[];
   totalWordsThisRound: number;
-  // Which turn/prompt we're on this round (1-indexed) — feeds
-  // getDifficultyForTurn() to derive the current letter-count/time-limit
-  // rather than storing a pre-computed "level" directly
   turnNumber: number;
-  // The letter the CURRENT turn's word must start with
   currentLetter: string;
+  turnToken: string;
+  turnResolved: boolean;
+  roundStartedAt: Date;
+  longestWord: LongestWord;
   sessionWinCounts: SessionWinEntry[];
 }
 
@@ -59,6 +65,15 @@ const sessionWinEntrySchema = new Schema<SessionWinEntry>(
   { _id: false },
 );
 
+const longestWordSchema = new Schema<LongestWord>(
+  {
+    word: { type: String, default: '' },
+    length: { type: Number, default: 0 },
+    userId: { type: String, default: '' },
+  },
+  { _id: false },
+);
+
 const activeGameSchema = new Schema<ActiveGame>(
   {
     isSession: { type: Boolean, default: false },
@@ -74,6 +89,10 @@ const activeGameSchema = new Schema<ActiveGame>(
     totalWordsThisRound: { type: Number, default: 0 },
     turnNumber: { type: Number, default: 0 },
     currentLetter: { type: String, default: '' },
+    turnToken: { type: String, default: '' },
+    turnResolved: { type: Boolean, default: true },
+    roundStartedAt: { type: Date, default: () => new Date(0) },
+    longestWord: { type: longestWordSchema, default: () => ({}) },
     sessionWinCounts: { type: [sessionWinEntrySchema], default: [] },
   },
   { _id: false },

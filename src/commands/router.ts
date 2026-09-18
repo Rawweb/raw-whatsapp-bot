@@ -4,6 +4,7 @@ import { resolveSenderNumber } from '../utils/resolveSender.js';
 import { ADMIN_NUMBERS } from '../config/admins.js';
 import { openLobby, addPlayerToLobby, endGame } from '../game/lobby.js';
 import { runLobbyTimer } from '../game/lobbyTimer.js';
+import { handleWordSubmission } from '../game/turnEngine.js';
 import {
   LOBBY_OPEN_STANDALONE,
   GAME_ALREADY_ACTIVE,
@@ -41,8 +42,19 @@ export async function handleIncomingMessages(
       continue;
     }
 
-    // Exact, case-sensitive prefix match only, for everything else
-    if (!trimmed.startsWith(COMMAND_PREFIX)) continue;
+    // Not a .raw command either — treat it as a possible word submission.
+    // handleWordSubmission itself no-ops unless a round is actually in
+    // progress and this sender is the current player.
+    if (!trimmed.startsWith(COMMAND_PREFIX)) {
+      const senderJid = msg.key.participant ?? msg.key.remoteJid;
+      const senderNumber = senderJid
+        ? await resolveSenderNumber(socket, remoteJid, senderJid)
+        : null;
+      if (senderNumber) {
+        await handleWordSubmission(socket, remoteJid, senderNumber, trimmed);
+      }
+      continue;
+    }
 
     // Everything after ".raw" is the actual command, e.g. "start", "session start"
     const command = trimmed.slice(COMMAND_PREFIX.length).trim();

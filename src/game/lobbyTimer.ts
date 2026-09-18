@@ -1,14 +1,12 @@
 import type { WASocket } from '@whiskeysockets/baileys';
 import { closeLobby, isLobbyStillOpen } from './lobby.js';
 import { startRound } from './round.js';
-import { getDifficultyForTurn, getDifficultyTier } from './difficulty.js';
+import { beginRound } from './turnEngine.js';
 import {
   joinReminder,
   LOBBY_TIME_ELAPSED,
   NOT_ENOUGH_PLAYERS,
-  turnStatus,
 } from '../config/messages.js';
-import { logger } from '../utils/logger.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -59,29 +57,6 @@ export async function runLobbyTimer(
 
   await socket.sendMessage(groupId, { text: LOBBY_TIME_ELAPSED });
 
-  const round = await startRound(groupId, result.players);
-  const { minLength, timeLimitSeconds } = getDifficultyForTurn(
-    round.turnNumber,
-  );
-  const tier = getDifficultyTier(minLength);
-
-  logger.info({ groupId, round }, 'Round started');
-
-  await socket.sendMessage(groupId, {
-    text: turnStatus({
-      currentPlayer: round.currentPlayer,
-      nextPlayer: round.nextPlayer,
-      letter: round.letter,
-      minLength,
-      tier,
-      playersRemaining: round.playersRemaining,
-      totalPlayers: round.totalPlayers,
-      timeLimitSeconds,
-      totalWords: 0,
-    }),
-    mentions: [
-      `${round.currentPlayer}@s.whatsapp.net`,
-      `${round.nextPlayer}@s.whatsapp.net`,
-    ],
-  });
+  await startRound(groupId, result.players);
+  await beginRound(socket, groupId);
 }
