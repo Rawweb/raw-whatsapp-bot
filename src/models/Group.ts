@@ -1,12 +1,16 @@
 import mongoose, { Schema } from 'mongoose';
 
-export type GamePhase = 'lobby' | 'in_progress';
+// 'awaiting_next_round': a session round just concluded but the session
+// itself hasn't ended — locked (isActive stays true) until the admin
+// runs the next round's start command, which is what actually reopens
+// the lobby (phase back to 'lobby') for that round.
+export type GamePhase = 'lobby' | 'in_progress' | 'awaiting_next_round';
 
 // Win counts, keyed by player. Stored as an array of {userId, wins}
 // rather than a Mongoose Map, because real WhatsApp JIDs contain a "."
 // (e.g. "...@s.whatsapp.net") and Mongoose's Map type rejects any key
 // containing one.
-interface SessionWinEntry {
+export interface SessionWinEntry {
   userId: string;
   wins: number;
 }
@@ -82,7 +86,11 @@ const activeGameSchema = new Schema<ActiveGame>(
     isSession: { type: Boolean, default: false },
     currentRound: { type: Number, default: 1 },
     isActive: { type: Boolean, default: false },
-    phase: { type: String, enum: ['lobby', 'in_progress'], default: 'lobby' },
+    phase: {
+      type: String,
+      enum: ['lobby', 'in_progress', 'awaiting_next_round'],
+      default: 'lobby',
+    },
     lobbyToken: { type: String, default: '' },
     startedBy: { type: String, default: '' },
     playerQueue: { type: [String], default: [] },

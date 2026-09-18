@@ -1,5 +1,6 @@
 import type { DifficultyTier } from '../game/difficulty.js';
 import type { WordRejectionReason } from '../game/wordValidation.js';
+import type { SessionWinEntry } from '../models/Group.js';
 
 // All bot-facing WhatsApp text lives in this one file — edit freely.
 // This is the only place you need to change to reword what the bot says.
@@ -12,6 +13,18 @@ export const LOBBY_OPEN_STANDALONE =
 
 export const GAME_ALREADY_ACTIVE =
   '❌ A game is already in progress. End it first with .raw end, or wait for it to finish.';
+
+export const SESSION_ALREADY_ACTIVE =
+  '❌ A session is already active. End it first with .raw session end, or wait for it to complete.';
+
+export function sessionLobbyOpen(roundNumber: number): string {
+  return (
+    `🎮 Session started — Round ${roundNumber} of 5\n` +
+    `👥 Need 2 or more players\n` +
+    `💬 Type "Join" to enter\n` +
+    `⏳ You have 60 seconds to join ⏳`
+  );
+}
 
 export function playerJoined(phoneNumber: string): string {
   return `✅ @${phoneNumber} joined`;
@@ -31,6 +44,12 @@ export const NOT_ENOUGH_PLAYERS =
 
 export const NOT_GAME_STARTER =
   '❌ Only the admin who started this game can end it.';
+
+export const NOT_SESSION_STARTER =
+  '❌ Only the admin who started this session can end it.';
+
+export const ROUND_CAP_EXCEEDED =
+  '❌ This session is capped at 5 rounds. Session has ended.';
 
 const TIER_EMOJI: Record<DifficultyTier, string> = {
   Easy: '🟢',
@@ -103,4 +122,45 @@ export function roundWinStandalone(params: {
     longestWordLine +
     `Time: ${params.elapsed}`
   );
+}
+
+export function roundWinSession(params: {
+  roundNumber: number;
+  winner: string;
+  totalWords: number;
+  longestWord: string;
+  longestWordLength: number;
+  longestWordBy: string;
+  elapsed: string;
+  winnerSessionWins: number;
+}): string {
+  const longestWordLine = params.longestWordBy
+    ? `Longest word: ${params.longestWord} (${params.longestWordLength}) by @${params.longestWordBy}\n`
+    : '';
+
+  return (
+    `🏆 @${params.winner} won Round ${params.roundNumber}!\n` +
+    `Words: ${params.totalWords}\n` +
+    longestWordLine +
+    `Time: ${params.elapsed}\n\n` +
+    `🏅 Session score: @${params.winner} has ${params.winnerSessionWins} win(s)`
+  );
+}
+
+export function sessionCompleteWinner(winner: string): string {
+  return `🎉 Session complete! @${winner} reached 3 wins and takes the session.`;
+}
+
+export const SESSION_COMPLETE_NO_WINNER =
+  '🏁 Session complete. No player reached 3 wins. No prize awarded this session.';
+
+function formatStandings(standings: SessionWinEntry[]): string {
+  return [...standings]
+    .sort((a, b) => b.wins - a.wins)
+    .map((entry) => `@${entry.userId} — ${entry.wins} win(s)`)
+    .join('\n');
+}
+
+export function sessionEndedByAdmin(standings: SessionWinEntry[]): string {
+  return `🏁 Session ended by admin. Current standings:\n${formatStandings(standings)}`;
 }

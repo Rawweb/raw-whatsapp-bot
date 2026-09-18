@@ -2,18 +2,45 @@ import { WAMessage, WASocket } from '@whiskeysockets/baileys';
 import { logger } from '../utils/logger.js';
 import { resolveSenderNumber } from '../utils/resolveSender.js';
 import { ADMIN_NUMBERS } from '../config/admins.js';
-import { openLobby, addPlayerToLobby, endGame } from '../game/lobby.js';
+import {
+  openLobby,
+  openSessionRound,
+  addPlayerToLobby,
+  endGame,
+  endSession,
+} from '../game/lobby.js';
 import { runLobbyTimer } from '../game/lobbyTimer.js';
 import { handleWordSubmission } from '../game/turnEngine.js';
 import {
   LOBBY_OPEN_STANDALONE,
   GAME_ALREADY_ACTIVE,
+  SESSION_ALREADY_ACTIVE,
+  sessionLobbyOpen,
   playerJoined,
   GAME_ENDED_BY_ADMIN,
   NOT_GAME_STARTER,
+  NOT_SESSION_STARTER,
+  ROUND_CAP_EXCEEDED,
+  sessionEndedByAdmin,
 } from '../config/messages.js';
 
 const COMMAND_PREFIX = '.raw';
+
+// Maps a .raw command's round word to its round number (round 1 is
+// always .raw session start, never spelled "first")
+const ROUND_ORDINALS: Record<string, number> = {
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
+};
+const BEYOND_CAP_ORDINALS = new Set([
+  'sixth',
+  'seventh',
+  'eighth',
+  'ninth',
+  'tenth',
+]);
 
 export async function handleIncomingMessages(
   socket: WASocket,
@@ -91,7 +118,7 @@ export async function handleIncomingMessages(
 
       // Fire-and-forget: runs independently of any further incoming
       // messages, caught so a failure logs instead of crashing the process
-      runLobbyTimer(socket, remoteJid, result.lobbyToken).catch((error) => {
+      runLobbyTimer(socket, remoteJid, result.lobbyToken, 1).catch((error) => {
         logger.error({ error }, 'Error running lobby timer');
       });
     } else if (command === 'end') {
@@ -105,6 +132,62 @@ export async function handleIncomingMessages(
         await socket.sendMessage(remoteJid, { text: NOT_GAME_STARTER });
       }
       // 'not_active': nothing was running — silently ignored
+    } else if (command === 'session start') {
+      if (!isAdmin || !senderNumber) continue;
+
+      const result = await openLobby(remoteJid, senderNumber, true);
+
+      if (!result.ok) {
+        await socket.sendMessage(remoteJid, { text: SESSION_ALREADY_ACTIVE });
+        continue;
+      }
+
+      await socket.sendMessage(remoteJid, { text: sessionLobbyOpen(1) });
+
+      runLobbyTimer(socket, remoteJid, result.lobbyToken, 1).catch((error) => {
+        logger.error({ error }, 'Error running lobby timer');
+      });
+    } else if (command === 'session end') {
+      if (!isAdmin || !senderNumber) continue;
+
+      const result = await endSession(remoteJid, senderNumber);
+
+      if (result.status === 'ended') {
+        await socket.sendMessage(remoteJid, {
+          text: sessionEndedByAdmin(result.standings),
+          mentions: result.standings.map((s) => `${s.userId}@s.whatsapp.net`),
+        });
+      } else if (result.status === 'not_starter') {
+        await socket.sendMessage(remoteJid, { text: NOT_SESSION_STARTER });
+      }
+      // 'not_active': nothing was running — silently ignored
+    } else if (BEYOND_CAP_ORDINALS.has(command.replace(/\s*start$/, ''))) {
+      if (!isAdmin || !senderNumber) continue;
+      await socket.sendMessage(remoteJid, { text: ROUND_CAP_EXCEEDED });
+    } else {
+      const ordinal = command.replace(/\s*start$/, '');
+      const roundNumber = ROUND_ORDINALS[ordinal];
+
+      if (roundNumber && command === `${ordinal} start`) {
+        if (!isAdmin || !senderNumber) continue;
+
+        const result = await openSessionRound(remoteJid, roundNumber, senderNumber);
+        // Unlike .raw start/.raw session start, a rejection here has no
+        // single clear cause (no session running at all, wrong round
+        // order, mid-round already, etc.) — silently ignored rather
+        // than risk a misleading message
+        if (!result.ok) continue;
+
+        await socket.sendMessage(remoteJid, {
+          text: sessionLobbyOpen(roundNumber),
+        });
+
+        runLobbyTimer(socket, remoteJid, result.lobbyToken, roundNumber).catch(
+          (error) => {
+            logger.error({ error }, 'Error running lobby timer');
+          },
+        );
+      }
     }
   }
 }

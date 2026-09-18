@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { WASocket, WAMessageKey } from '@whiskeysockets/baileys';
-import { Group } from '../models/Group.js';
+import { Group, SessionWinEntry } from '../models/Group.js';
 import { getDifficultyForAnswerCount, getDifficultyTier } from './difficulty.js';
 import { validateWord } from './wordValidation.js';
 import {
@@ -8,8 +8,33 @@ import {
   wordRejected,
   timeoutElimination,
   roundWinStandalone,
+  roundWinSession,
+  sessionCompleteWinner,
+  SESSION_COMPLETE_NO_WINNER,
 } from '../config/messages.js';
 import { logger } from '../utils/logger.js';
+
+const WINS_TO_TAKE_SESSION = 3;
+const MAX_SESSION_ROUNDS = 5;
+
+function incrementSessionWin(
+  entries: SessionWinEntry[],
+  userId: string,
+): SessionWinEntry[] {
+  // Build genuinely plain objects rather than spreading `e` — these
+  // entries come from a non-.lean() Mongoose query, so each `e` is a
+  // subdocument instance, not a plain object; {...e} does not reliably
+  // copy its fields (this was a real bug, caught via testing, not
+  // hypothetical: it silently produced entries missing `userId`)
+  const plain = entries.map((e) => ({ userId: e.userId, wins: e.wins }));
+  const existing = plain.find((e) => e.userId === userId);
+  if (existing) {
+    return plain.map((e) =>
+      e.userId === userId ? { userId: e.userId, wins: e.wins + 1 } : e,
+    );
+  }
+  return [...plain, { userId, wins: 1 }];
+}
 
 // Turn N's required letter is just this round's shuffled sequence at
 // position N-1, cycling back to the start if a round runs past 26 turns
@@ -288,8 +313,15 @@ async function endRoundWithWinner(
   const group = await Group.findOne({ groupId });
   if (!group) return;
 
-  const { playerQueue, totalWordsThisRound, longestWord, roundStartedAt } =
-    group.activeGame;
+  const {
+    playerQueue,
+    totalWordsThisRound,
+    longestWord,
+    roundStartedAt,
+    isSession,
+    currentRound,
+    sessionWinCounts,
+  } = group.activeGame;
   const winner = playerQueue.find((p) => !finalEliminated.includes(p));
   if (!winner) return;
 
@@ -301,25 +333,91 @@ async function endRoundWithWinner(
     ? [`${winner}@s.whatsapp.net`, `${longestWord.userId}@s.whatsapp.net`]
     : [`${winner}@s.whatsapp.net`];
 
+  if (!isSession) {
+    await socket.sendMessage(groupId, {
+      text: roundWinStandalone({
+        winner,
+        totalWords: totalWordsThisRound,
+        longestWord: longestWord.word,
+        longestWordLength: longestWord.length,
+        longestWordBy: longestWord.userId,
+        elapsed,
+      }),
+      mentions,
+    });
+
+    await Group.updateOne(
+      { groupId },
+      {
+        $set: {
+          'activeGame.isActive': false,
+          'activeGame.phase': 'lobby',
+          'activeGame.eliminated': finalEliminated,
+        },
+      },
+    );
+    return;
+  }
+
+  // Session round win: update this session's score, then decide whether
+  // the whole session just ended (someone hit 3 wins, or this was the
+  // 5th round) or continues on to the next round.
+  const newWinCounts = incrementSessionWin(sessionWinCounts, winner);
+  const winnerWins =
+    newWinCounts.find((e) => e.userId === winner)?.wins ?? 0;
+
   await socket.sendMessage(groupId, {
-    text: roundWinStandalone({
+    text: roundWinSession({
+      roundNumber: currentRound,
       winner,
       totalWords: totalWordsThisRound,
       longestWord: longestWord.word,
       longestWordLength: longestWord.length,
       longestWordBy: longestWord.userId,
       elapsed,
+      winnerSessionWins: winnerWins,
     }),
     mentions,
   });
 
+  if (winnerWins >= WINS_TO_TAKE_SESSION || currentRound >= MAX_SESSION_ROUNDS) {
+    const endedWithWinner = winnerWins >= WINS_TO_TAKE_SESSION;
+
+    await socket.sendMessage(groupId, {
+      text: endedWithWinner
+        ? sessionCompleteWinner(winner)
+        : SESSION_COMPLETE_NO_WINNER,
+      mentions: endedWithWinner ? [`${winner}@s.whatsapp.net`] : [],
+    });
+
+    await Group.updateOne(
+      { groupId },
+      {
+        $set: {
+          'activeGame.isActive': false,
+          'activeGame.phase': 'lobby',
+          'activeGame.eliminated': finalEliminated,
+          'activeGame.sessionWinCounts': newWinCounts,
+        },
+        lastCompletedSessionSnapshot: {
+          roundReached: currentRound,
+          finalStandings: newWinCounts,
+          endedWithWinner,
+          endedAt: new Date(),
+        },
+      },
+    );
+    return;
+  }
+
+  // Session continues — locked, waiting for the admin to open the next round
   await Group.updateOne(
     { groupId },
     {
       $set: {
-        'activeGame.isActive': false,
-        'activeGame.phase': 'lobby',
+        'activeGame.phase': 'awaiting_next_round',
         'activeGame.eliminated': finalEliminated,
+        'activeGame.sessionWinCounts': newWinCounts,
       },
     },
   );

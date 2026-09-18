@@ -32,6 +32,7 @@ export async function runLobbyTimer(
   socket: WASocket,
   groupId: string,
   lobbyToken: string,
+  roundNumber: number,
 ): Promise<void> {
   let elapsed = 0;
 
@@ -57,6 +58,6 @@ export async function runLobbyTimer(
 
   await socket.sendMessage(groupId, { text: LOBBY_TIME_ELAPSED });
 
-  await startRound(groupId, result.players);
+  await startRound(groupId, roundNumber, result.players);
   await beginRound(socket, groupId);
 }
