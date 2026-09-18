@@ -4,6 +4,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import { useMongoDBAuthState } from './authState.js';
+import { handleIncomingMessages } from '../commands/router.js';
 import { logger } from '../utils/logger.js';
 
 export async function connectToWhatsApp(): Promise<WASocket> {
@@ -14,6 +15,8 @@ export async function connectToWhatsApp(): Promise<WASocket> {
   const socket = makeWASocket({
     auth: state,
     logger,
+    // Shows as the linked device name in WhatsApp's "Linked Devices" list
+    browser: ['Rawfile Game Bot', 'Chrome', '1.0.0'],
   });
 
   // Persist creds to MongoDB every time Baileys updates them
@@ -49,6 +52,11 @@ export async function connectToWhatsApp(): Promise<WASocket> {
     } else if (connection === 'open') {
       logger.info('WhatsApp connection established');
     }
+  });
+
+  // Every incoming message passes through here for command parsing
+  socket.ev.on('messages.upsert', ({ messages }) => {
+    handleIncomingMessages(socket, messages);
   });
 
   return socket;
