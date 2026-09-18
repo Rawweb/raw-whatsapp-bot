@@ -1,7 +1,7 @@
-import type { WASocket } from '@whiskeysockets/baileys';
 import { closeLobby, isLobbyStillOpen } from './lobby.js';
 import { startRound } from './round.js';
 import { beginRound } from './turnEngine.js';
+import { getCurrentSocket } from '../connection/whatsapp.js';
 import {
   joinReminder,
   LOBBY_TIME_ELAPSED,
@@ -22,14 +22,7 @@ const REMINDERS = [
   { atMs: 45_000, secondsLeft: 15 },
 ];
 
-// Runs the whole life of one lobby's join window: each reminder above,
-// then closing it (cancel or hand off to gameplay) once WINDOW_MS has
-// elapsed. Every step re-checks the lobby is still the same one that
-// was opened — see lobbyToken's comment in Group.ts — so a game that
-// was manually ended (and maybe restarted) mid-window can't have a
-// stale timer interfere with it.
 export async function runLobbyTimer(
-  socket: WASocket,
   groupId: string,
   lobbyToken: string,
   roundNumber: number,
@@ -41,7 +34,7 @@ export async function runLobbyTimer(
     elapsed = reminder.atMs;
 
     if (!(await isLobbyStillOpen(groupId, lobbyToken))) return;
-    await socket.sendMessage(groupId, {
+    await getCurrentSocket().sendMessage(groupId, {
       text: joinReminder(reminder.secondsLeft),
     });
   }
@@ -52,12 +45,12 @@ export async function runLobbyTimer(
   if (result.status === 'stale') return;
 
   if (result.status === 'not_enough_players') {
-    await socket.sendMessage(groupId, { text: NOT_ENOUGH_PLAYERS });
+    await getCurrentSocket().sendMessage(groupId, { text: NOT_ENOUGH_PLAYERS });
     return;
   }
 
-  await socket.sendMessage(groupId, { text: LOBBY_TIME_ELAPSED });
+  await getCurrentSocket().sendMessage(groupId, { text: LOBBY_TIME_ELAPSED });
 
   await startRound(groupId, roundNumber, result.players);
-  await beginRound(socket, groupId);
+  await beginRound(groupId);
 }

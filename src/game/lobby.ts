@@ -244,9 +244,17 @@ export async function closeLobby(
   const players = group.activeGame.playerQueue;
 
   if (players.length < 2) {
-    if (group.activeGame.isSession) {
-      // Don't end the whole session over one under-joined round — leave
-      // it locked, waiting, so the admin can just retry this same round
+    // A round has actually started only once roundStartedAt moves off
+    // its sentinel (see beginRound in turnEngine.ts) — if it's still
+    // there, no round in this session has ever begun, meaning this was
+    // round 1's own lobby failing. There's no ".raw first start" to
+    // retry it with, so that case must fully unlock (like standalone)
+    // rather than lock into 'awaiting_next_round' with nothing able to
+    // reopen it. Rounds 2-5 failing keeps the lock — retried via the
+    // same ordinal command (e.g. .raw third start again).
+    const noRoundEverStarted = group.activeGame.roundStartedAt.getTime() === 0;
+
+    if (group.activeGame.isSession && !noRoundEverStarted) {
       group.activeGame.phase = 'awaiting_next_round';
     } else {
       group.activeGame.isActive = false;
@@ -260,4 +268,37 @@ export async function closeLobby(
   group.activeGame.phase = 'in_progress';
   await group.save();
   return { status: 'closed', players };
+}
+
+export interface LeaderboardData {
+  roundNumber: number;
+  standings: SessionWinEntry[];
+}
+
+// .raw leaderboard's data source, per spec: the CURRENT session's live
+// standings if one is running right now, otherwise the last one that
+// actually completed — never the session before that, and never a
+// standalone game (those don't have "standings", just a single winner).
+export async function getLeaderboardData(
+  groupId: string,
+): Promise<LeaderboardData | null> {
+  const group = await Group.findOne({ groupId });
+  if (!group) return null;
+
+  if (group.activeGame.isActive && group.activeGame.isSession) {
+    return {
+      roundNumber: group.activeGame.currentRound,
+      standings: group.activeGame.sessionWinCounts,
+    };
+  }
+
+  const snapshot = group.lastCompletedSessionSnapshot;
+  if (snapshot) {
+    return {
+      roundNumber: snapshot.roundReached,
+      standings: snapshot.finalStandings,
+    };
+  }
+
+  return null;
 }

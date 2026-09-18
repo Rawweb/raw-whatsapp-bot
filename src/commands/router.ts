@@ -8,9 +8,11 @@ import {
   addPlayerToLobby,
   endGame,
   endSession,
+  getLeaderboardData,
 } from '../game/lobby.js';
 import { runLobbyTimer } from '../game/lobbyTimer.js';
 import { handleWordSubmission } from '../game/turnEngine.js';
+import { getTotalboardData } from '../game/userStats.js';
 import {
   LOBBY_OPEN_STANDALONE,
   GAME_ALREADY_ACTIVE,
@@ -22,6 +24,10 @@ import {
   NOT_SESSION_STARTER,
   ROUND_CAP_EXCEEDED,
   sessionEndedByAdmin,
+  sessionLeaderboard,
+  NO_SESSION_PLAYED,
+  totalboard,
+  NO_STATS_YET,
 } from '../config/messages.js';
 
 const COMMAND_PREFIX = '.raw';
@@ -78,13 +84,7 @@ export async function handleIncomingMessages(
         ? await resolveSenderNumber(socket, remoteJid, senderJid)
         : null;
       if (senderNumber) {
-        await handleWordSubmission(
-          socket,
-          remoteJid,
-          senderNumber,
-          trimmed,
-          msg.key,
-        );
+        await handleWordSubmission(remoteJid, senderNumber, trimmed, msg.key);
       }
       continue;
     }
@@ -118,7 +118,7 @@ export async function handleIncomingMessages(
 
       // Fire-and-forget: runs independently of any further incoming
       // messages, caught so a failure logs instead of crashing the process
-      runLobbyTimer(socket, remoteJid, result.lobbyToken, 1).catch((error) => {
+      runLobbyTimer(remoteJid, result.lobbyToken, 1).catch((error) => {
         logger.error({ error }, 'Error running lobby timer');
       });
     } else if (command === 'end') {
@@ -144,7 +144,7 @@ export async function handleIncomingMessages(
 
       await socket.sendMessage(remoteJid, { text: sessionLobbyOpen(1) });
 
-      runLobbyTimer(socket, remoteJid, result.lobbyToken, 1).catch((error) => {
+      runLobbyTimer(remoteJid, result.lobbyToken, 1).catch((error) => {
         logger.error({ error }, 'Error running lobby timer');
       });
     } else if (command === 'session end') {
@@ -161,6 +161,31 @@ export async function handleIncomingMessages(
         await socket.sendMessage(remoteJid, { text: NOT_SESSION_STARTER });
       }
       // 'not_active': nothing was running — silently ignored
+    } else if (command === 'leaderboard') {
+      // Non-privileged — anyone can check it
+      const data = await getLeaderboardData(remoteJid);
+
+      if (!data) {
+        await socket.sendMessage(remoteJid, { text: NO_SESSION_PLAYED });
+        continue;
+      }
+
+      await socket.sendMessage(remoteJid, {
+        text: sessionLeaderboard(data.roundNumber, data.standings),
+        mentions: data.standings.map((s) => `${s.userId}@s.whatsapp.net`),
+      });
+    } else if (command === 'totalboard') {
+      const entries = await getTotalboardData(remoteJid);
+
+      if (entries.length === 0) {
+        await socket.sendMessage(remoteJid, { text: NO_STATS_YET });
+        continue;
+      }
+
+      await socket.sendMessage(remoteJid, {
+        text: totalboard(entries),
+        mentions: entries.map((e) => `${e.userId}@s.whatsapp.net`),
+      });
     } else if (BEYOND_CAP_ORDINALS.has(command.replace(/\s*start$/, ''))) {
       if (!isAdmin || !senderNumber) continue;
       await socket.sendMessage(remoteJid, { text: ROUND_CAP_EXCEEDED });
@@ -182,7 +207,7 @@ export async function handleIncomingMessages(
           text: sessionLobbyOpen(roundNumber),
         });
 
-        runLobbyTimer(socket, remoteJid, result.lobbyToken, roundNumber).catch(
+        runLobbyTimer(remoteJid, result.lobbyToken, roundNumber).catch(
           (error) => {
             logger.error({ error }, 'Error running lobby timer');
           },

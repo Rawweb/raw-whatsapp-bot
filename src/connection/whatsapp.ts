@@ -9,6 +9,24 @@ import { logger } from '../utils/logger.js';
 
 const RECONNECT_RETRY_DELAY_MS = 10_000;
 
+// The one always-current socket. Anything that fires immediately (a
+// message handler, called synchronously by Baileys with whatever socket
+// is live right now) can safely use the socket it was handed directly.
+// But anything scheduled to run LATER — a turn timeout, a lobby
+// reminder — must not hold onto that same reference across the delay,
+// since a reconnect in between replaces the socket entirely and the
+// old one silently stops working (sendMessage on it never
+// resolves — no error, just a permanent hang). Those call
+// getCurrentSocket() at the moment they actually send, instead.
+let currentSocket: WASocket | undefined;
+
+export function getCurrentSocket(): WASocket {
+  if (!currentSocket) {
+    throw new Error('getCurrentSocket() called before any connection was established');
+  }
+  return currentSocket;
+}
+
 // Keeps retrying connectToWhatsApp() until it actually succeeds, instead
 // of giving up after one failed attempt. Needed because a reconnect can
 // itself fail (e.g. MongoDB briefly unreachable during the same network
@@ -38,6 +56,8 @@ export async function connectToWhatsApp(): Promise<WASocket> {
     // Shows as the linked device name in WhatsApp's "Linked Devices" list
     browser: ['Rawfile Game Bot', 'Chrome', '1.0.0'],
   });
+
+  currentSocket = socket;
 
   // Persist creds to MongoDB every time Baileys updates them
   socket.ev.on('creds.update', saveCreds);

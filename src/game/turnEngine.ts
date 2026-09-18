@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
-import type { WASocket, WAMessageKey } from '@whiskeysockets/baileys';
+import type { WAMessageKey } from '@whiskeysockets/baileys';
 import { Group, SessionWinEntry } from '../models/Group.js';
+import { getCurrentSocket } from '../connection/whatsapp.js';
 import { getDifficultyForAnswerCount, getDifficultyTier } from './difficulty.js';
 import { validateWord } from './wordValidation.js';
+import { recordWin, recordWordIfLongest } from './userStats.js';
 import {
   turnStatus,
   wordRejected,
@@ -67,21 +69,22 @@ function formatElapsed(ms: number): string {
 
 // Kicks off the very first turn of a round — called once, right after
 // startRound() has set up a fresh playerQueue/currentTurnIndex/letterSequence.
-export async function beginRound(
-  socket: WASocket,
-  groupId: string,
-): Promise<void> {
+export async function beginRound(groupId: string): Promise<void> {
   await Group.updateOne(
     { groupId },
     { $set: { 'activeGame.roundStartedAt': new Date() } },
   );
-  await beginTurn(socket, groupId);
+  await beginTurn(groupId);
 }
 
 // Posts the status for whoever is currently at activeGame.currentTurnIndex
 // and schedules that turn's timeout. Called at round start and again
-// after every turn that doesn't end the round.
-async function beginTurn(socket: WASocket, groupId: string): Promise<void> {
+// after every turn that doesn't end the round. Every send in this file
+// fetches the socket fresh via getCurrentSocket() rather than holding
+// one passed in — see the comment on it in whatsapp.ts: this function's
+// own setTimeout can fire up to 45s+ later, long enough for a reconnect
+// to have replaced the connection entirely in the meantime.
+async function beginTurn(groupId: string): Promise<void> {
   const group = await Group.findOne({ groupId });
   if (!group || !group.activeGame.isActive) return; // e.g. .raw end fired
 
@@ -119,7 +122,7 @@ async function beginTurn(socket: WASocket, groupId: string): Promise<void> {
     },
   );
 
-  await socket.sendMessage(groupId, {
+  await getCurrentSocket().sendMessage(groupId, {
     text: turnStatus({
       currentPlayer,
       nextPlayer,
@@ -138,7 +141,7 @@ async function beginTurn(socket: WASocket, groupId: string): Promise<void> {
   });
 
   setTimeout(() => {
-    handleTimeout(socket, groupId, turnToken).catch((error) => {
+    handleTimeout(groupId, turnToken).catch((error) => {
       logger.error({ error }, 'Error handling turn timeout');
     });
   }, timeLimitSeconds * 1000);
@@ -148,9 +151,11 @@ async function beginTurn(socket: WASocket, groupId: string): Promise<void> {
 // Silently does nothing unless the sender is actually the current
 // player — everyone else's messages during gameplay are just chat.
 // msgKey identifies the sender's actual message, so an accepted word
-// can get a ✅ reaction on it.
+// can get a ✅ reaction on it. Called synchronously from the live
+// message handler, so the socket here is always current — but it still
+// goes through getCurrentSocket() for consistency, and because it can
+// call into beginTurn/advanceAfterCorrectAnswer which schedule timers.
 export async function handleWordSubmission(
-  socket: WASocket,
   groupId: string,
   senderNumber: string,
   rawWord: string,
@@ -183,7 +188,7 @@ export async function handleWordSubmission(
   );
 
   if (!validation.valid) {
-    await socket.sendMessage(groupId, {
+    await getCurrentSocket().sendMessage(groupId, {
       text: wordRejected(validation.reason, word, letter, minLength, senderNumber),
       mentions: [`${senderNumber}@s.whatsapp.net`],
     });
@@ -209,10 +214,13 @@ export async function handleWordSubmission(
 
   if (claim.modifiedCount === 0) return;
 
-  await socket.sendMessage(groupId, { react: { text: '✅', key: msgKey } });
+  await getCurrentSocket().sendMessage(groupId, {
+    react: { text: '✅', key: msgKey },
+  });
 
   await maybeUpdateLongestWord(groupId, word, senderNumber);
-  await advanceAfterCorrectAnswer(socket, groupId);
+  await recordWordIfLongest(groupId, senderNumber, word);
+  await advanceAfterCorrectAnswer(groupId);
 }
 
 async function maybeUpdateLongestWord(
@@ -230,10 +238,7 @@ async function maybeUpdateLongestWord(
   );
 }
 
-async function advanceAfterCorrectAnswer(
-  socket: WASocket,
-  groupId: string,
-): Promise<void> {
+async function advanceAfterCorrectAnswer(groupId: string): Promise<void> {
   const group = await Group.findOne({ groupId });
   if (!group) return;
 
@@ -251,14 +256,10 @@ async function advanceAfterCorrectAnswer(
     },
   );
 
-  await beginTurn(socket, groupId);
+  await beginTurn(groupId);
 }
 
-async function handleTimeout(
-  socket: WASocket,
-  groupId: string,
-  turnToken: string,
-): Promise<void> {
+async function handleTimeout(groupId: string, turnToken: string): Promise<void> {
   const claim = await Group.updateOne(
     { groupId, 'activeGame.turnToken': turnToken, 'activeGame.turnResolved': false },
     { $set: { 'activeGame.turnResolved': true } },
@@ -272,7 +273,7 @@ async function handleTimeout(
     group.activeGame;
   const eliminatedPlayer = playerQueue[currentTurnIndex];
 
-  await socket.sendMessage(groupId, {
+  await getCurrentSocket().sendMessage(groupId, {
     text: timeoutElimination(eliminatedPlayer),
     mentions: [`${eliminatedPlayer}@s.whatsapp.net`],
   });
@@ -281,7 +282,7 @@ async function handleTimeout(
   const remaining = playerQueue.length - newEliminated.length;
 
   if (remaining <= 1) {
-    await endRoundWithWinner(socket, groupId, newEliminated);
+    await endRoundWithWinner(groupId, newEliminated);
     return;
   }
 
@@ -302,11 +303,10 @@ async function handleTimeout(
     },
   );
 
-  await beginTurn(socket, groupId);
+  await beginTurn(groupId);
 }
 
 async function endRoundWithWinner(
-  socket: WASocket,
   groupId: string,
   finalEliminated: string[],
 ): Promise<void> {
@@ -325,6 +325,10 @@ async function endRoundWithWinner(
   const winner = playerQueue.find((p) => !finalEliminated.includes(p));
   if (!winner) return;
 
+  // Permanent, never-reset stats — a standalone win and a session round
+  // win are both "a win" for totalboard purposes, per spec
+  await recordWin(groupId, winner);
+
   const elapsed = formatElapsed(Date.now() - roundStartedAt.getTime());
 
   // Only mention the longest-word holder if a word was actually accepted
@@ -334,7 +338,7 @@ async function endRoundWithWinner(
     : [`${winner}@s.whatsapp.net`];
 
   if (!isSession) {
-    await socket.sendMessage(groupId, {
+    await getCurrentSocket().sendMessage(groupId, {
       text: roundWinStandalone({
         winner,
         totalWords: totalWordsThisRound,
@@ -366,7 +370,7 @@ async function endRoundWithWinner(
   const winnerWins =
     newWinCounts.find((e) => e.userId === winner)?.wins ?? 0;
 
-  await socket.sendMessage(groupId, {
+  await getCurrentSocket().sendMessage(groupId, {
     text: roundWinSession({
       roundNumber: currentRound,
       winner,
@@ -383,7 +387,7 @@ async function endRoundWithWinner(
   if (winnerWins >= WINS_TO_TAKE_SESSION || currentRound >= MAX_SESSION_ROUNDS) {
     const endedWithWinner = winnerWins >= WINS_TO_TAKE_SESSION;
 
-    await socket.sendMessage(groupId, {
+    await getCurrentSocket().sendMessage(groupId, {
       text: endedWithWinner
         ? sessionCompleteWinner(winner)
         : SESSION_COMPLETE_NO_WINNER,

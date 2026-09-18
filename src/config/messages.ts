@@ -164,3 +164,34 @@ function formatStandings(standings: SessionWinEntry[]): string {
 export function sessionEndedByAdmin(standings: SessionWinEntry[]): string {
   return `🏁 Session ended by admin. Current standings:\n${formatStandings(standings)}`;
 }
+
+export function sessionLeaderboard(
+  roundNumber: number,
+  standings: SessionWinEntry[],
+): string {
+  return (
+    `📊 Session leaderboard (Round ${roundNumber} of 5)\n` +
+    formatStandings(standings)
+  );
+}
+
+export const NO_SESSION_PLAYED =
+  'No session has been played in this group yet.';
+
+export function totalboard(
+  entries: { userId: string; totalWins: number; longestWord: string; longestWordLength: number }[],
+): string {
+  const lines = [...entries]
+    .sort((a, b) => b.totalWins - a.totalWins)
+    .map((entry) => {
+      const wordPart = entry.longestWord
+        ? ` | longest word: ${entry.longestWord} (${entry.longestWordLength})`
+        : '';
+      return `@${entry.userId} — ${entry.totalWins} win(s)${wordPart}`;
+    })
+    .join('\n');
+
+  return `🏆 All-time leaderboard\n${lines}`;
+}
+
+export const NO_STATS_YET = 'No games have been played in this group yet.';
