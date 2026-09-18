@@ -31,11 +31,18 @@ async function main(): Promise<void> {
   // Fail fast if MongoDB isn't reachable before touching WhatsApp at all
   await connectDatabase();
 
-  // Open the WhatsApp connection — prints a QR to scan on first run
-  await connectToWhatsApp();
-
-  // Needed on Render specifically — see healthServer.ts's comment
+  // Started BEFORE the WhatsApp connection, not after — Render needs to
+  // see an open port to consider the deploy live, and WhatsApp
+  // connecting (or pairing) can be slow or flaky on its own. Gating
+  // this behind a successful WhatsApp connection meant any hiccup there
+  // left Render's port scan finding nothing, forever — caught live:
+  // the deploy sat stuck on "No open ports detected" while a WhatsApp
+  // reconnect was still in progress.
   startHealthServer();
+
+  // Open the WhatsApp connection — prints a QR (or requests a pairing
+  // code — see whatsapp.ts) on first run
+  await connectToWhatsApp();
 
   logger.info('Bot boot sequence complete');
 }
