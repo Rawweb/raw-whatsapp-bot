@@ -2,11 +2,14 @@ import { WAMessage, WASocket } from '@whiskeysockets/baileys';
 import { logger } from '../utils/logger.js';
 import { resolveSenderNumber } from '../utils/resolveSender.js';
 import { ADMIN_NUMBERS } from '../config/admins.js';
-import { openLobby, addPlayerToLobby } from '../game/lobby.js';
+import { openLobby, addPlayerToLobby, endGame } from '../game/lobby.js';
+import { runLobbyTimer } from '../game/lobbyTimer.js';
 import {
   LOBBY_OPEN_STANDALONE,
   GAME_ALREADY_ACTIVE,
   playerJoined,
+  GAME_ENDED_BY_ADMIN,
+  NOT_GAME_STARTER,
 } from '../config/messages.js';
 
 const COMMAND_PREFIX = '.raw';
@@ -57,9 +60,9 @@ export async function handleIncomingMessages(
     );
 
     if (command === 'start') {
-      if (!isAdmin) continue; // non-admins: silently ignored, per decision
+      if (!isAdmin || !senderNumber) continue; // non-admins: silently ignored
 
-      const result = await openLobby(remoteJid);
+      const result = await openLobby(remoteJid, senderNumber);
 
       if (!result.ok) {
         await socket.sendMessage(remoteJid, { text: GAME_ALREADY_ACTIVE });
@@ -67,6 +70,23 @@ export async function handleIncomingMessages(
       }
 
       await socket.sendMessage(remoteJid, { text: LOBBY_OPEN_STANDALONE });
+
+      // Fire-and-forget: runs independently of any further incoming
+      // messages, caught so a failure logs instead of crashing the process
+      runLobbyTimer(socket, remoteJid, result.lobbyToken).catch((error) => {
+        logger.error({ error }, 'Error running lobby timer');
+      });
+    } else if (command === 'end') {
+      if (!isAdmin || !senderNumber) continue; // non-admins: silently ignored
+
+      const result = await endGame(remoteJid, senderNumber);
+
+      if (result === 'ended') {
+        await socket.sendMessage(remoteJid, { text: GAME_ENDED_BY_ADMIN });
+      } else if (result === 'not_starter') {
+        await socket.sendMessage(remoteJid, { text: NOT_GAME_STARTER });
+      }
+      // 'not_active': nothing was running — silently ignored
     }
   }
 }

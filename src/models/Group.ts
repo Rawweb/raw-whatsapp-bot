@@ -16,6 +16,14 @@ interface ActiveGame {
   currentRound: number;
   isActive: boolean;
   phase: GamePhase;
+  // Random ID assigned each time a lobby opens. Lets a scheduled timer
+  // (set when the lobby opened) tell whether it's still talking about
+  // the *same* lobby, or a stale one from a game that was since ended
+  // and restarted — without this, an old timer could fire against a
+  // brand-new lobby and close it early.
+  lobbyToken: string;
+  // Phone number of the admin who ran .raw start — only they can .raw end it
+  startedBy: string;
   playerQueue: string[];
   currentTurnIndex: number;
   eliminated: string[];
@@ -52,6 +60,8 @@ const activeGameSchema = new Schema<ActiveGame>(
     currentRound: { type: Number, default: 1 },
     isActive: { type: Boolean, default: false },
     phase: { type: String, enum: ['lobby', 'in_progress'], default: 'lobby' },
+    lobbyToken: { type: String, default: '' },
+    startedBy: { type: String, default: '' },
     playerQueue: { type: [String], default: [] },
     currentTurnIndex: { type: Number, default: 0 },
     eliminated: { type: [String], default: [] },

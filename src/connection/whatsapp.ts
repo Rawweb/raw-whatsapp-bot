@@ -7,6 +7,26 @@ import { useMongoDBAuthState } from './authState.js';
 import { handleIncomingMessages } from '../commands/router.js';
 import { logger } from '../utils/logger.js';
 
+const RECONNECT_RETRY_DELAY_MS = 10_000;
+
+// Keeps retrying connectToWhatsApp() until it actually succeeds, instead
+// of giving up after one failed attempt. Needed because a reconnect can
+// itself fail (e.g. MongoDB briefly unreachable during the same network
+// blip that dropped WhatsApp) — without this, one bad-timing failure
+// would leave the bot permanently disconnected until manually restarted.
+async function reconnectWithRetry(): Promise<void> {
+  try {
+    await connectToWhatsApp();
+  } catch (error) {
+    logger.error(
+      { error },
+      `Reconnect failed, retrying in ${RECONNECT_RETRY_DELAY_MS / 1000}s`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, RECONNECT_RETRY_DELAY_MS));
+    await reconnectWithRetry();
+  }
+}
+
 export async function connectToWhatsApp(): Promise<WASocket> {
   // Load creds/keys from MongoDB (or blank ones, on first-ever run)
   const { state, saveCreds } = await useMongoDBAuthState();
@@ -43,11 +63,9 @@ export async function connectToWhatsApp(): Promise<WASocket> {
       logger.error({ statusCode }, 'WhatsApp connection closed');
 
       if (shouldReconnect) {
-        // Catch so a failed reconnect attempt (e.g. Mongo briefly
-        // unreachable too) logs an error instead of crashing the process
-        connectToWhatsApp().catch((error) => {
-          logger.error({ error }, 'Failed to reconnect to WhatsApp');
-        });
+        // Retries until it succeeds, rather than giving up after one
+        // failed attempt — see reconnectWithRetry's comment above
+        reconnectWithRetry();
       } else {
         logger.error(
           'Logged out of WhatsApp. Clear stored auth state and scan a new QR to reconnect.',
