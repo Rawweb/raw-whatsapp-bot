@@ -1,4 +1,5 @@
 import makeWASocket, {
+  Browsers,
   DisconnectReason,
   WASocket,
 } from '@whiskeysockets/baileys';
@@ -53,8 +54,15 @@ export async function connectToWhatsApp(): Promise<WASocket> {
   const socket = makeWASocket({
     auth: state,
     logger,
-    // Shows as the linked device name in WhatsApp's "Linked Devices" list
-    browser: ['Rawfile Game Bot', 'Chrome', '1.0.0'],
+    // A Baileys-shipped, WhatsApp-recognized fingerprint — not the
+    // custom 'Rawfile Game Bot' identity used before. Reverted as one
+    // of a few possible contributing factors to a 401/"Connection
+    // Failure" loop during registration: server-side rejection of an
+    // unrecognized browser fingerprint is a documented cause of exactly
+    // this failure pattern, separate from IP-based flagging. Costs the
+    // custom device name in Linked Devices — worth it while actually
+    // getting connected again is the priority. Can revisit once stable.
+    browser: Browsers.ubuntu('Chrome'),
   });
 
   currentSocket = socket;

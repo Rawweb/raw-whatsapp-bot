@@ -4,6 +4,6 @@
 export const ADMIN_NUMBERS: string[] = [
   // e.g. '2348012345678'
   '2348068226614',
-  '2349078382987',
-  '2347076084335',
+  // '2349078382987', // now the bot's own number, not an admin
+  // '2347076084335',
 ];
