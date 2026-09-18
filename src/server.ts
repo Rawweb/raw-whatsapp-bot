@@ -1,5 +1,6 @@
 import { connectDatabase } from './connection/db.js';
 import { connectToWhatsApp } from './connection/whatsapp.js';
+import { startHealthServer } from './http/healthServer.js';
 import { logger } from './utils/logger.js';
 
 async function main(): Promise<void> {
@@ -8,6 +9,9 @@ async function main(): Promise<void> {
 
   // Open the WhatsApp connection — prints a QR to scan on first run
   await connectToWhatsApp();
+
+  // Needed on Render specifically — see healthServer.ts's comment
+  startHealthServer();
 
   logger.info('Bot boot sequence complete');
 }
