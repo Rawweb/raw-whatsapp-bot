@@ -59,24 +59,7 @@ export async function connectToWhatsApp(): Promise<WASocket> {
 
   currentSocket = socket;
 
-  // On a headless deployment (e.g. Render), scanning a QR rendered
-  // inside a web-based log viewer is unreliable — the ASCII art
-  // doesn't survive browser rendering cleanly enough for a phone
-  // camera to actually read it (confirmed live: renders fine, still
-  // unscannable). Setting PAIRING_PHONE_NUMBER switches to WhatsApp's
-  // pairing-code method instead: a short code you type directly into
-  // the phone, no camera involved. Requested once, before the account
-  // is actually registered — Baileys' own recommended pattern. Left
-  // unset, QR scanning is used as before (fine for local dev, where a
-  // real terminal renders it perfectly).
   const pairingPhoneNumber = process.env.PAIRING_PHONE_NUMBER;
-  if (pairingPhoneNumber && !state.creds.registered) {
-    const code = await socket.requestPairingCode(pairingPhoneNumber);
-    logger.info(
-      { code },
-      'Enter this code in WhatsApp: Linked Devices > Link a Device > Link with phone number instead',
-    );
-  }
 
   // Persist creds to MongoDB every time Baileys updates them
   socket.ev.on('creds.update', saveCreds);
@@ -124,6 +107,36 @@ export async function connectToWhatsApp(): Promise<WASocket> {
       logger.error({ error }, 'Error handling incoming messages');
     });
   });
+
+  // On a headless deployment (e.g. Render), scanning a QR rendered
+  // inside a web-based log viewer is unreliable — the ASCII art
+  // doesn't survive browser rendering cleanly enough for a phone
+  // camera to actually read it (confirmed live: renders fine, still
+  // unscannable). Setting PAIRING_PHONE_NUMBER switches to WhatsApp's
+  // pairing-code method instead: a short code you type directly into
+  // the phone, no camera involved. Left unset, QR scanning is used as
+  // before (fine for local dev, where a real terminal renders it
+  // perfectly). Requested AFTER listeners are attached, and on its own
+  // fire-and-forget chain — a failure here must never prevent
+  // connection.update/messages.upsert from being wired up, which an
+  // earlier version of this code got wrong (it awaited this inline,
+  // before the listeners existed at all). A short delay first, since
+  // requesting immediately after socket creation is unreliable — the
+  // connection needs a moment to actually establish.
+  if (pairingPhoneNumber && !state.creds.registered) {
+    (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      try {
+        const code = await socket.requestPairingCode(pairingPhoneNumber);
+        logger.info(
+          { code },
+          'Enter this code in WhatsApp: Linked Devices > Link a Device > Link with phone number instead',
+        );
+      } catch (error) {
+        logger.error({ error }, 'Failed to request pairing code');
+      }
+    })();
+  }
 
   return socket;
 }
