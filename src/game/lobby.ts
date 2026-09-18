@@ -181,6 +181,13 @@ export async function endSession(
     return { status: 'not_starter' };
   }
 
+  // Plain objects, not the Mongoose subdocuments group.activeGame gives
+  // us directly — same reasoning as incrementSessionWin in turnEngine.ts
+  const standings = group.activeGame.sessionWinCounts.map((e) => ({
+    userId: e.userId,
+    wins: e.wins,
+  }));
+
   const result = await Group.updateOne(
     {
       groupId,
@@ -194,12 +201,23 @@ export async function endSession(
         'activeGame.phase': 'lobby',
         'activeGame.playerQueue': [],
       },
+      // A manual .raw session end still counts as "the last completed
+      // session" for .raw leaderboard purposes — without this, the
+      // session simply vanishes from leaderboard the moment it's ended
+      // this way (real bug, caught live: leaderboard said "no session
+      // has been played" right after a session was just ended)
+      lastCompletedSessionSnapshot: {
+        roundReached: group.activeGame.currentRound,
+        finalStandings: standings,
+        endedWithWinner: false,
+        endedAt: new Date(),
+      },
     },
   );
 
   if (result.modifiedCount === 0) return { status: 'not_active' };
 
-  return { status: 'ended', standings: group.activeGame.sessionWinCounts };
+  return { status: 'ended', standings };
 }
 
 // Checks whether a lobby the caller opened earlier (identified by its
