@@ -36,7 +36,10 @@ interface ActiveGame {
   wordsUsedThisRound: string[];
   totalWordsThisRound: number;
   turnNumber: number;
-  currentLetter: string;
+  // The round's 26 letters, shuffled once at round start. Turn N's
+  // required letter is sequence[(N - 1) % 26] — cycles back to the
+  // start of the same shuffle if a round somehow runs past 26 turns.
+  letterSequence: string[];
   turnToken: string;
   turnResolved: boolean;
   roundStartedAt: Date;
@@ -88,7 +91,7 @@ const activeGameSchema = new Schema<ActiveGame>(
     wordsUsedThisRound: { type: [String], default: [] },
     totalWordsThisRound: { type: Number, default: 0 },
     turnNumber: { type: Number, default: 0 },
-    currentLetter: { type: String, default: '' },
+    letterSequence: { type: [String], default: [] },
     turnToken: { type: String, default: '' },
     turnResolved: { type: Boolean, default: true },
     roundStartedAt: { type: Date, default: () => new Date(0) },

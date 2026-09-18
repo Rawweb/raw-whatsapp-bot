@@ -13,26 +13,26 @@ function shuffle<T>(items: T[]): T[] {
   return result;
 }
 
-// Shuffles the lobby's joined players into a fixed turn order (once —
-// never re-shuffled again this round, per spec) and sets up turn 1 with
-// a random starting letter. Every turn after this one instead uses the
-// last letter of the previous accepted word (chain style) — see
-// turnEngine.ts, which actually posts and runs each turn.
+// Shuffles the lobby's joined players into a fixed turn order, and
+// separately shuffles the 26 letters into this round's letter sequence
+// (turn N's required letter is just sequence[(N-1) % 26] — see
+// turnEngine.ts, which actually posts and runs each turn). Neither
+// shuffle happens again once the round starts.
 export async function startRound(
   groupId: string,
   players: string[],
 ): Promise<void> {
-  const shuffled = shuffle(players);
-  const letter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+  const shuffledPlayers = shuffle(players);
+  const letterSequence = shuffle(LETTERS.split(''));
 
   await Group.updateOne(
     { groupId },
     {
       $set: {
-        'activeGame.playerQueue': shuffled,
+        'activeGame.playerQueue': shuffledPlayers,
         'activeGame.currentTurnIndex': 0,
         'activeGame.turnNumber': 1,
-        'activeGame.currentLetter': letter,
+        'activeGame.letterSequence': letterSequence,
         'activeGame.eliminated': [],
       },
     },

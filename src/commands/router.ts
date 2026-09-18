@@ -51,7 +51,13 @@ export async function handleIncomingMessages(
         ? await resolveSenderNumber(socket, remoteJid, senderJid)
         : null;
       if (senderNumber) {
-        await handleWordSubmission(socket, remoteJid, senderNumber, trimmed);
+        await handleWordSubmission(
+          socket,
+          remoteJid,
+          senderNumber,
+          trimmed,
+          msg.key,
+        );
       }
       continue;
     }

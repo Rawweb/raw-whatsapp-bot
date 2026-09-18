@@ -37,7 +37,7 @@ export async function openLobby(
         wordsUsedThisRound: [],
         totalWordsThisRound: 0,
         turnNumber: 0,
-        currentLetter: '',
+        letterSequence: [],
         turnToken: '',
         turnResolved: true,
         roundStartedAt: new Date(0),

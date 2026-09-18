@@ -20,17 +20,26 @@ const MAX_MIN_LENGTH = 10;
 // drops below this. Only once letters are capped does time keep falling.
 const PRE_CAP_TIME_FLOOR = 20;
 const MIN_TIME_LIMIT = 5;
-const TURNS_PER_ESCALATION = 2;
+// Escalation is driven by how many words have actually been ANSWERED
+// correctly so far this round, not by turn count — so pacing stays the
+// same regardless of how many players are in the game (or how many
+// have been eliminated). 5 successful answers at each length before
+// it climbs, same cadence once time starts falling on its own.
+const ANSWERS_PER_ESCALATION = 5;
 
 // The escalation level at which letters first hit MAX_MIN_LENGTH —
 // e.g. starting at 3, capping at 10, that's 7 levels of +1 each.
 const CAP_LEVEL = MAX_MIN_LENGTH - STARTING_MIN_LENGTH;
 
-// turnNumber starts at 1. Every 2 turns, min length climbs by 1 (capped
-// at 10) while time drops by 5s but holds at 20 until letters cap out —
-// after that, time resumes falling every 2 turns down to a 5s floor.
-export function getDifficultyForTurn(turnNumber: number): TurnDifficulty {
-  const level = Math.floor((turnNumber - 1) / TURNS_PER_ESCALATION);
+// answersSoFar = how many words have been correctly answered this round
+// BEFORE the upcoming turn (0 for turn 1). Every 5 of those, min length
+// climbs by 1 (capped at 10) while time drops by 5s but holds at 20
+// until letters cap out — after that, time resumes falling every 5
+// answers down to a 5s floor.
+export function getDifficultyForAnswerCount(
+  answersSoFar: number,
+): TurnDifficulty {
+  const level = Math.floor(answersSoFar / ANSWERS_PER_ESCALATION);
 
   const minLength = Math.min(STARTING_MIN_LENGTH + level, MAX_MIN_LENGTH);
 

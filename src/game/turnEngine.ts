@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import type { WASocket } from '@whiskeysockets/baileys';
+import type { WASocket, WAMessageKey } from '@whiskeysockets/baileys';
 import { Group } from '../models/Group.js';
-import { getDifficultyForTurn, getDifficultyTier } from './difficulty.js';
+import { getDifficultyForAnswerCount, getDifficultyTier } from './difficulty.js';
 import { validateWord } from './wordValidation.js';
 import {
   turnStatus,
@@ -11,10 +11,10 @@ import {
 } from '../config/messages.js';
 import { logger } from '../utils/logger.js';
 
-const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
-
-function randomLetter(): string {
-  return LETTERS[Math.floor(Math.random() * LETTERS.length)];
+// Turn N's required letter is just this round's shuffled sequence at
+// position N-1, cycling back to the start if a round runs past 26 turns
+function getLetterForTurn(letterSequence: string[], turnNumber: number): string {
+  return letterSequence[(turnNumber - 1) % letterSequence.length];
 }
 
 // Finds the next player after `fromIndex` in the fixed queue who isn't
@@ -41,7 +41,7 @@ function formatElapsed(ms: number): string {
 }
 
 // Kicks off the very first turn of a round — called once, right after
-// startRound() has set up a fresh playerQueue/currentTurnIndex/letter.
+// startRound() has set up a fresh playerQueue/currentTurnIndex/letterSequence.
 export async function beginRound(
   socket: WASocket,
   groupId: string,
@@ -64,7 +64,7 @@ async function beginTurn(socket: WASocket, groupId: string): Promise<void> {
     playerQueue,
     eliminated,
     currentTurnIndex,
-    currentLetter,
+    letterSequence,
     turnNumber,
     totalWordsThisRound,
   } = group.activeGame;
@@ -76,9 +76,11 @@ async function beginTurn(socket: WASocket, groupId: string): Promise<void> {
     currentTurnIndex,
   );
   const nextPlayer = playerQueue[nextIndex];
+  const letter = getLetterForTurn(letterSequence, turnNumber);
 
   const turnToken = crypto.randomUUID();
-  const { minLength, timeLimitSeconds } = getDifficultyForTurn(turnNumber);
+  const { minLength, timeLimitSeconds } =
+    getDifficultyForAnswerCount(totalWordsThisRound);
   const tier = getDifficultyTier(minLength);
   const playersRemaining = playerQueue.length - eliminated.length;
 
@@ -96,7 +98,7 @@ async function beginTurn(socket: WASocket, groupId: string): Promise<void> {
     text: turnStatus({
       currentPlayer,
       nextPlayer,
-      letter: currentLetter,
+      letter,
       minLength,
       tier,
       playersRemaining,
@@ -120,34 +122,44 @@ async function beginTurn(socket: WASocket, groupId: string): Promise<void> {
 // Called for every plain-text message while a round is in progress.
 // Silently does nothing unless the sender is actually the current
 // player — everyone else's messages during gameplay are just chat.
+// msgKey identifies the sender's actual message, so an accepted word
+// can get a ✅ reaction on it.
 export async function handleWordSubmission(
   socket: WASocket,
   groupId: string,
   senderNumber: string,
   rawWord: string,
+  msgKey: WAMessageKey,
 ): Promise<void> {
   const group = await Group.findOne({ groupId });
   if (!group || !group.activeGame.isActive) return;
   if (group.activeGame.phase !== 'in_progress') return;
 
-  const { playerQueue, currentTurnIndex, currentLetter, wordsUsedThisRound } =
-    group.activeGame;
+  const {
+    playerQueue,
+    currentTurnIndex,
+    letterSequence,
+    turnNumber,
+    wordsUsedThisRound,
+    totalWordsThisRound,
+  } = group.activeGame;
   const currentPlayer = playerQueue[currentTurnIndex];
   if (senderNumber !== currentPlayer) return;
 
-  const { minLength } = getDifficultyForTurn(group.activeGame.turnNumber);
+  const letter = getLetterForTurn(letterSequence, turnNumber);
+  const { minLength } = getDifficultyForAnswerCount(totalWordsThisRound);
   const word = rawWord.trim().toLowerCase();
 
   const validation = await validateWord(
     word,
-    currentLetter,
+    letter,
     minLength,
     wordsUsedThisRound,
   );
 
   if (!validation.valid) {
     await socket.sendMessage(groupId, {
-      text: wordRejected(validation.reason, word, currentLetter, minLength, senderNumber),
+      text: wordRejected(validation.reason, word, letter, minLength, senderNumber),
       mentions: [`${senderNumber}@s.whatsapp.net`],
     });
     return;
@@ -172,8 +184,10 @@ export async function handleWordSubmission(
 
   if (claim.modifiedCount === 0) return;
 
+  await socket.sendMessage(groupId, { react: { text: '✅', key: msgKey } });
+
   await maybeUpdateLongestWord(groupId, word, senderNumber);
-  await advanceAfterCorrectAnswer(socket, groupId, word);
+  await advanceAfterCorrectAnswer(socket, groupId);
 }
 
 async function maybeUpdateLongestWord(
@@ -194,7 +208,6 @@ async function maybeUpdateLongestWord(
 async function advanceAfterCorrectAnswer(
   socket: WASocket,
   groupId: string,
-  word: string,
 ): Promise<void> {
   const group = await Group.findOne({ groupId });
   if (!group) return;
@@ -202,14 +215,12 @@ async function advanceAfterCorrectAnswer(
   const { playerQueue, eliminated, currentTurnIndex, turnNumber } =
     group.activeGame;
   const nextIndex = findNextActiveIndex(playerQueue, eliminated, currentTurnIndex);
-  const newLetter = word[word.length - 1];
 
   await Group.updateOne(
     { groupId },
     {
       $set: {
         'activeGame.currentTurnIndex': nextIndex,
-        'activeGame.currentLetter': newLetter,
         'activeGame.turnNumber': turnNumber + 1,
       },
     },
@@ -255,8 +266,6 @@ async function handleTimeout(
     currentTurnIndex,
   );
 
-  // currentLetter is intentionally left unchanged here — the chain only
-  // advances when someone actually answers; a timeout doesn't extend it
   await Group.updateOne(
     { groupId },
     {
@@ -316,4 +325,4 @@ async function endRoundWithWinner(
   );
 }
 
-export { randomLetter, findNextActiveIndex, formatElapsed };
+export { findNextActiveIndex, formatElapsed, getLetterForTurn };
