@@ -43,7 +43,11 @@ export async function connectToWhatsApp(): Promise<WASocket> {
       logger.error({ statusCode }, 'WhatsApp connection closed');
 
       if (shouldReconnect) {
-        connectToWhatsApp();
+        // Catch so a failed reconnect attempt (e.g. Mongo briefly
+        // unreachable too) logs an error instead of crashing the process
+        connectToWhatsApp().catch((error) => {
+          logger.error({ error }, 'Failed to reconnect to WhatsApp');
+        });
       } else {
         logger.error(
           'Logged out of WhatsApp. Clear stored auth state and scan a new QR to reconnect.',
@@ -54,9 +58,13 @@ export async function connectToWhatsApp(): Promise<WASocket> {
     }
   });
 
-  // Every incoming message passes through here for command parsing
+  // Every incoming message passes through here for command parsing.
+  // Caught so one failed message (e.g. a transient Mongo blip) logs an
+  // error instead of an unhandled rejection crashing the whole process.
   socket.ev.on('messages.upsert', ({ messages }) => {
-    handleIncomingMessages(socket, messages);
+    handleIncomingMessages(socket, messages).catch((error) => {
+      logger.error({ error }, 'Error handling incoming messages');
+    });
   });
 
   return socket;

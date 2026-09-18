@@ -2,6 +2,12 @@ import { WAMessage, WASocket } from '@whiskeysockets/baileys';
 import { logger } from '../utils/logger.js';
 import { resolveSenderNumber } from '../utils/resolveSender.js';
 import { ADMIN_NUMBERS } from '../config/admins.js';
+import { openLobby, addPlayerToLobby } from '../game/lobby.js';
+import {
+  LOBBY_OPEN_STANDALONE,
+  GAME_ALREADY_ACTIVE,
+  playerJoined,
+} from '../config/messages.js';
 
 const COMMAND_PREFIX = '.raw';
 
@@ -25,7 +31,14 @@ export async function handleIncomingMessages(
 
     const trimmed = text.trim();
 
-    // Exact, case-sensitive prefix match only
+    // "Join" is matched case-insensitively and is a separate kind of
+    // trigger from .raw commands — handled on its own, then move on
+    if (trimmed.toLowerCase() === 'join') {
+      await handleJoin(socket, remoteJid, msg);
+      continue;
+    }
+
+    // Exact, case-sensitive prefix match only, for everything else
     if (!trimmed.startsWith(COMMAND_PREFIX)) continue;
 
     // Everything after ".raw" is the actual command, e.g. "start", "session start"
@@ -43,14 +56,39 @@ export async function handleIncomingMessages(
       'Received .raw command',
     );
 
-    // First real command handler: just proves the bot can reply at all.
-    // No lobby/timer/join-tracking yet — that's a separate, bigger piece.
     if (command === 'start') {
       if (!isAdmin) continue; // non-admins: silently ignored, per decision
 
-      await socket.sendMessage(remoteJid, {
-        text: '🎮 Game starting...\n👥 Need 2 or more players\n⏳ You have 60 seconds to join ⏳',
-      });
+      const result = await openLobby(remoteJid);
+
+      if (!result.ok) {
+        await socket.sendMessage(remoteJid, { text: GAME_ALREADY_ACTIVE });
+        continue;
+      }
+
+      await socket.sendMessage(remoteJid, { text: LOBBY_OPEN_STANDALONE });
     }
   }
+}
+
+async function handleJoin(
+  socket: WASocket,
+  groupJid: string,
+  msg: WAMessage,
+): Promise<void> {
+  const senderJid = msg.key.participant ?? msg.key.remoteJid;
+  if (!senderJid) return;
+
+  const senderNumber = await resolveSenderNumber(socket, groupJid, senderJid);
+  if (!senderNumber) return;
+
+  const result = await addPlayerToLobby(groupJid, senderNumber);
+
+  // Repeat joins, and joins after the window closes, are both silent per spec
+  if (result !== 'joined') return;
+
+  await socket.sendMessage(groupJid, {
+    text: playerJoined(senderNumber),
+    mentions: [`${senderNumber}@s.whatsapp.net`],
+  });
 }
