@@ -1,3 +1,5 @@
+import type { DifficultyTier } from '../game/difficulty.js';
+
 // All bot-facing WhatsApp text lives in this one file — edit freely.
 // This is the only place you need to change to reword what the bot says.
 
@@ -28,3 +30,31 @@ export const NOT_ENOUGH_PLAYERS =
 
 export const NOT_GAME_STARTER =
   '❌ Only the admin who started this game can end it.';
+
+const TIER_EMOJI: Record<DifficultyTier, string> = {
+  Easy: '🟢',
+  Medium: '🟡',
+  Hard: '🔴',
+};
+
+export function turnStatus(params: {
+  currentPlayer: string;
+  nextPlayer: string;
+  letter: string;
+  minLength: number;
+  tier: DifficultyTier;
+  playersRemaining: number;
+  totalPlayers: number;
+  timeLimitSeconds: number;
+  totalWords: number;
+}): string {
+  return (
+    `🎲 Turn: @${params.currentPlayer}\n` +
+    `🔜 Next: @${params.nextPlayer}\n` +
+    `🔤 Starts with ${params.letter.toUpperCase()} (at least ${params.minLength} letters)\n` +
+    `${TIER_EMOJI[params.tier]} ${params.tier}\n` +
+    `👥 Players left: ${params.playersRemaining}/${params.totalPlayers}\n` +
+    `⏳ You have ${params.timeLimitSeconds} seconds to reply\n` +
+    `📝 Total words: ${params.totalWords}`
+  );
+}

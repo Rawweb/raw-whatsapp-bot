@@ -29,7 +29,12 @@ interface ActiveGame {
   eliminated: string[];
   wordsUsedThisRound: string[];
   totalWordsThisRound: number;
-  difficultyLevel: number;
+  // Which turn/prompt we're on this round (1-indexed) — feeds
+  // getDifficultyForTurn() to derive the current letter-count/time-limit
+  // rather than storing a pre-computed "level" directly
+  turnNumber: number;
+  // The letter the CURRENT turn's word must start with
+  currentLetter: string;
   sessionWinCounts: SessionWinEntry[];
 }
 
@@ -67,7 +72,8 @@ const activeGameSchema = new Schema<ActiveGame>(
     eliminated: { type: [String], default: [] },
     wordsUsedThisRound: { type: [String], default: [] },
     totalWordsThisRound: { type: Number, default: 0 },
-    difficultyLevel: { type: Number, default: 0 },
+    turnNumber: { type: Number, default: 0 },
+    currentLetter: { type: String, default: '' },
     sessionWinCounts: { type: [sessionWinEntrySchema], default: [] },
   },
   { _id: false },

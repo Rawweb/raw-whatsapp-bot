@@ -1,9 +1,12 @@
 import type { WASocket } from '@whiskeysockets/baileys';
 import { closeLobby, isLobbyStillOpen } from './lobby.js';
+import { startRound } from './round.js';
+import { getDifficultyForTurn, getDifficultyTier } from './difficulty.js';
 import {
   joinReminder,
   LOBBY_TIME_ELAPSED,
   NOT_ENOUGH_PLAYERS,
+  turnStatus,
 } from '../config/messages.js';
 import { logger } from '../utils/logger.js';
 
@@ -56,9 +59,29 @@ export async function runLobbyTimer(
 
   await socket.sendMessage(groupId, { text: LOBBY_TIME_ELAPSED });
 
-  // Turn engine doesn't exist yet — this is as far as the game gets for now
-  logger.info(
-    { groupId, players: result.players },
-    'Lobby closed with enough players — turn engine not built yet',
+  const round = await startRound(groupId, result.players);
+  const { minLength, timeLimitSeconds } = getDifficultyForTurn(
+    round.turnNumber,
   );
+  const tier = getDifficultyTier(minLength);
+
+  logger.info({ groupId, round }, 'Round started');
+
+  await socket.sendMessage(groupId, {
+    text: turnStatus({
+      currentPlayer: round.currentPlayer,
+      nextPlayer: round.nextPlayer,
+      letter: round.letter,
+      minLength,
+      tier,
+      playersRemaining: round.playersRemaining,
+      totalPlayers: round.totalPlayers,
+      timeLimitSeconds,
+      totalWords: 0,
+    }),
+    mentions: [
+      `${round.currentPlayer}@s.whatsapp.net`,
+      `${round.nextPlayer}@s.whatsapp.net`,
+    ],
+  });
 }
